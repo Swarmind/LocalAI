@@ -3,6 +3,7 @@ package model
 import (
 	"context"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,18 +17,23 @@ import (
 
 // new idea: what if we declare a struct of these here, and use a loop to check?
 
-// TODO: Split ModelLoader and TemplateLoader? Just to keep things more organized. Left together to share a mutex until I look into that. Would split if we seperate directories for .bin/.yaml and .tmpl
+// TODO: Split ModelLoader and TemplateLoader? Just to keep things more organized. Left together to share a mutex until I look into that. Would split if we separate directories for .bin/.yaml and .tmpl
 type ModelLoader struct {
-	ModelPath string
-	mu        sync.Mutex
-	models    map[string]*Model
-	wd        *WatchDog
+	ModelPath        string
+	mu               sync.Mutex
+	singletonLock    sync.Mutex
+	singletonMode    bool
+	models           map[string]*Model
+	wd               *WatchDog
+	externalBackends map[string]string
 }
 
-func NewModelLoader(modelPath string) *ModelLoader {
+func NewModelLoader(modelPath string, singleActiveBackend bool) *ModelLoader {
 	nml := &ModelLoader{
-		ModelPath: modelPath,
-		models:    make(map[string]*Model),
+		ModelPath:        modelPath,
+		models:           make(map[string]*Model),
+		singletonMode:    singleActiveBackend,
+		externalBackends: make(map[string]string),
 	}
 
 	return nml
@@ -39,6 +45,33 @@ func (ml *ModelLoader) SetWatchDog(wd *WatchDog) {
 
 func (ml *ModelLoader) ExistsInModelPath(s string) bool {
 	return utils.ExistsInPath(ml.ModelPath, s)
+}
+
+func (ml *ModelLoader) SetExternalBackend(name, uri string) {
+	ml.mu.Lock()
+	defer ml.mu.Unlock()
+	ml.externalBackends[name] = uri
+}
+
+func (ml *ModelLoader) DeleteExternalBackend(name string) {
+	ml.mu.Lock()
+	defer ml.mu.Unlock()
+	delete(ml.externalBackends, name)
+}
+
+func (ml *ModelLoader) GetExternalBackend(name string) string {
+	ml.mu.Lock()
+	defer ml.mu.Unlock()
+	return ml.externalBackends[name]
+}
+
+func (ml *ModelLoader) GetAllExternalBackends(o *Options) map[string]string {
+	backends := make(map[string]string)
+	maps.Copy(backends, ml.externalBackends)
+	if o != nil {
+		maps.Copy(backends, o.externalBackends)
+	}
+	return backends
 }
 
 var knownFilesToSkip []string = []string{
@@ -142,26 +175,6 @@ func (ml *ModelLoader) LoadModel(modelID, modelName string, loader func(string, 
 func (ml *ModelLoader) ShutdownModel(modelName string) error {
 	ml.mu.Lock()
 	defer ml.mu.Unlock()
-	model, ok := ml.models[modelName]
-	if !ok {
-		return fmt.Errorf("model %s not found", modelName)
-	}
-
-	retries := 1
-	for model.GRPC(false, ml.wd).IsBusy() {
-		log.Debug().Msgf("%s busy. Waiting.", modelName)
-		dur := time.Duration(retries*2) * time.Second
-		if dur > retryTimeout {
-			dur = retryTimeout
-		}
-		time.Sleep(dur)
-		retries++
-
-		if retries > 10 && os.Getenv("LOCALAI_FORCE_BACKEND_SHUTDOWN") == "true" {
-			log.Warn().Msgf("Model %s is still busy after %d retries. Forcing shutdown.", modelName, retries)
-			break
-		}
-	}
 
 	return ml.deleteProcess(modelName)
 }

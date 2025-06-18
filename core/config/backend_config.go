@@ -37,6 +37,7 @@ type BackendConfig struct {
 	TemplateConfig      TemplateConfig         `yaml:"template"`
 	KnownUsecaseStrings []string               `yaml:"known_usecases"`
 	KnownUsecases       *BackendConfigUsecases `yaml:"-"`
+	Pipeline            Pipeline               `yaml:"pipeline"`
 
 	PromptStrings, InputStrings                []string               `yaml:"-"`
 	InputToken                                 [][]int                `yaml:"-"`
@@ -49,9 +50,6 @@ type BackendConfig struct {
 	FeatureFlag FeatureFlag `yaml:"feature_flags"` // Feature Flag registry. We move fast, and features may break on a per model/backend basis. Registry for (usually temporary) flags that indicate aborting something early.
 	// LLM configs (GPT4ALL, Llama.cpp, ...)
 	LLMConfig `yaml:",inline"`
-
-	// AutoGPTQ specifics
-	AutoGPTQ AutoGPTQ `yaml:"autogptq"`
 
 	// Diffusers
 	Diffusers Diffusers `yaml:"diffusers"`
@@ -73,6 +71,14 @@ type BackendConfig struct {
 	Usage       string `yaml:"usage"`
 
 	Options []string `yaml:"options"`
+}
+
+// Pipeline defines other models to use for audio-to-audio
+type Pipeline struct {
+	TTS           string `yaml:"tts"`
+	LLM           string `yaml:"llm"`
+	Transcription string `yaml:"transcription"`
+	VAD           string `yaml:"vad"`
 }
 
 type File struct {
@@ -123,6 +129,7 @@ type LLMConfig struct {
 	MMap            *bool    `yaml:"mmap"`
 	MMlock          *bool    `yaml:"mmlock"`
 	LowVRAM         *bool    `yaml:"low_vram"`
+	Reranking       *bool    `yaml:"reranking"`
 	Grammar         string   `yaml:"grammar"`
 	StopWords       []string `yaml:"stopwords"`
 	Cutstrings      []string `yaml:"cutstrings"`
@@ -130,28 +137,28 @@ type LLMConfig struct {
 	TrimSpace       []string `yaml:"trimspace"`
 	TrimSuffix      []string `yaml:"trimsuffix"`
 
-	ContextSize          *int               `yaml:"context_size"`
-	NUMA                 bool               `yaml:"numa"`
-	LoraAdapter          string             `yaml:"lora_adapter"`
-	LoraBase             string             `yaml:"lora_base"`
-	LoraAdapters         []string           `yaml:"lora_adapters"`
-	LoraScales           []float32          `yaml:"lora_scales"`
-	LoraScale            float32            `yaml:"lora_scale"`
-	NoMulMatQ            bool               `yaml:"no_mulmatq"`
-	DraftModel           string             `yaml:"draft_model"`
-	NDraft               int32              `yaml:"n_draft"`
-	Quantization         string             `yaml:"quantization"`
-	LoadFormat           string             `yaml:"load_format"`
-	GPUMemoryUtilization float32            `yaml:"gpu_memory_utilization"` // vLLM
-	TrustRemoteCode      bool               `yaml:"trust_remote_code"`      // vLLM
-	EnforceEager         bool               `yaml:"enforce_eager"`          // vLLM
-	SwapSpace            int                `yaml:"swap_space"`             // vLLM
-	MaxModelLen          int                `yaml:"max_model_len"`          // vLLM
-	TensorParallelSize   int                `yaml:"tensor_parallel_size"`   // vLLM
-	DisableLogStatus     bool               `yaml:"disable_log_stats"`      // vLLM
-	DType                string             `yaml:"dtype"`                  // vLLM
-	LimitMMPerPrompt     LimitMMPerPrompt   `yaml:"limit_mm_per_prompt"`    // vLLM
-	MMProj               string             `yaml:"mmproj"`
+	ContextSize          *int             `yaml:"context_size"`
+	NUMA                 bool             `yaml:"numa"`
+	LoraAdapter          string           `yaml:"lora_adapter"`
+	LoraBase             string           `yaml:"lora_base"`
+	LoraAdapters         []string         `yaml:"lora_adapters"`
+	LoraScales           []float32        `yaml:"lora_scales"`
+	LoraScale            float32          `yaml:"lora_scale"`
+	NoMulMatQ            bool             `yaml:"no_mulmatq"`
+	DraftModel           string           `yaml:"draft_model"`
+	NDraft               int32            `yaml:"n_draft"`
+	Quantization         string           `yaml:"quantization"`
+	LoadFormat           string           `yaml:"load_format"`
+	GPUMemoryUtilization float32          `yaml:"gpu_memory_utilization"` // vLLM
+	TrustRemoteCode      bool             `yaml:"trust_remote_code"`      // vLLM
+	EnforceEager         bool             `yaml:"enforce_eager"`          // vLLM
+	SwapSpace            int              `yaml:"swap_space"`             // vLLM
+	MaxModelLen          int              `yaml:"max_model_len"`          // vLLM
+	TensorParallelSize   int              `yaml:"tensor_parallel_size"`   // vLLM
+	DisableLogStatus     bool             `yaml:"disable_log_stats"`      // vLLM
+	DType                string           `yaml:"dtype"`                  // vLLM
+	LimitMMPerPrompt     LimitMMPerPrompt `yaml:"limit_mm_per_prompt"`    // vLLM
+	MMProj               string           `yaml:"mmproj"`
 
 	FlashAttention bool   `yaml:"flash_attention"`
 	NoKVOffloading bool   `yaml:"no_kv_offloading"`
@@ -171,17 +178,9 @@ type LLMConfig struct {
 
 // LimitMMPerPrompt is a struct that holds the configuration for the limit-mm-per-prompt config in vLLM
 type LimitMMPerPrompt struct {
-	LimitImagePerPrompt   int   `yaml:"image"`
-	LimitVideoPerPrompt   int   `yaml:"video"`
-	LimitAudioPerPrompt   int   `yaml:"audio"`
-}
-
-// AutoGPTQ is a struct that holds the configuration specific to the AutoGPTQ backend
-type AutoGPTQ struct {
-	ModelBaseName    string `yaml:"model_base_name"`
-	Device           string `yaml:"device"`
-	Triton           bool   `yaml:"triton"`
-	UseFastTokenizer bool   `yaml:"use_fast_tokenizer"`
+	LimitImagePerPrompt int `yaml:"image"`
+	LimitVideoPerPrompt int `yaml:"video"`
+	LimitAudioPerPrompt int `yaml:"audio"`
 }
 
 // TemplateConfig is a struct that holds the configuration of the templating system
@@ -213,6 +212,8 @@ type TemplateConfig struct {
 	Multimodal string `yaml:"multimodal"`
 
 	JinjaTemplate bool `yaml:"jinja_template"`
+
+	ReplyPrefix string `yaml:"reply_prefix"`
 }
 
 func (c *BackendConfig) UnmarshalYAML(value *yaml.Node) error {
@@ -222,7 +223,15 @@ func (c *BackendConfig) UnmarshalYAML(value *yaml.Node) error {
 		return err
 	}
 	*c = BackendConfig(aux)
+
 	c.KnownUsecases = GetUsecasesFromYAML(c.KnownUsecaseStrings)
+	// Make sure the usecases are valid, we rewrite with what we identified
+	c.KnownUsecaseStrings = []string{}
+	for k, usecase := range GetAllBackendConfigUsecases() {
+		if c.HasUsecases(usecase) {
+			c.KnownUsecaseStrings = append(c.KnownUsecaseStrings, k)
+		}
+	}
 	return nil
 }
 
@@ -305,9 +314,6 @@ func (cfg *BackendConfig) SetDefaults(opts ...ConfigLoaderOption) {
 	defaultTFZ := 1.0
 	defaultZero := 0
 
-	// Try to offload all GPU layers (if GPU is found)
-	defaultHigh := 99999999
-
 	trueV := true
 	falseV := false
 
@@ -367,9 +373,6 @@ func (cfg *BackendConfig) SetDefaults(opts ...ConfigLoaderOption) {
 	if cfg.MirostatTAU == nil {
 		cfg.MirostatTAU = &defaultMirostatTAU
 	}
-	if cfg.NGPULayers == nil {
-		cfg.NGPULayers = &defaultHigh
-	}
 
 	if cfg.LowVRAM == nil {
 		cfg.LowVRAM = &falseV
@@ -379,14 +382,8 @@ func (cfg *BackendConfig) SetDefaults(opts ...ConfigLoaderOption) {
 		cfg.Embeddings = &falseV
 	}
 
-	// Value passed by the top level are treated as default (no implicit defaults)
-	// defaults are set by the user
-	if ctx == 0 {
-		ctx = 1024
-	}
-
-	if cfg.ContextSize == nil {
-		cfg.ContextSize = &ctx
+	if cfg.Reranking == nil {
+		cfg.Reranking = &falseV
 	}
 
 	if threads == 0 {
@@ -410,16 +407,7 @@ func (cfg *BackendConfig) SetDefaults(opts ...ConfigLoaderOption) {
 		cfg.Debug = &trueV
 	}
 
-	if len(cfg.KnownUsecaseStrings) == 0 {
-		// Infer use case if not provided
-		for k, usecase := range GetAllBackendConfigUsecases() {
-			if cfg.HasUsecases(usecase) {
-				cfg.KnownUsecaseStrings = append(cfg.KnownUsecaseStrings, k)
-			}
-		}
-	}
-
-	guessDefaultsFromFile(cfg, lo.modelPath)
+	guessDefaultsFromFile(cfg, lo.modelPath, ctx)
 }
 
 func (c *BackendConfig) Validate() bool {
@@ -456,18 +444,19 @@ func (c *BackendConfig) HasTemplate() bool {
 type BackendConfigUsecases int
 
 const (
-	FLAG_ANY              BackendConfigUsecases = 0b00000000000
-	FLAG_CHAT             BackendConfigUsecases = 0b00000000001
-	FLAG_COMPLETION       BackendConfigUsecases = 0b00000000010
-	FLAG_EDIT             BackendConfigUsecases = 0b00000000100
-	FLAG_EMBEDDINGS       BackendConfigUsecases = 0b00000001000
-	FLAG_RERANK           BackendConfigUsecases = 0b00000010000
-	FLAG_IMAGE            BackendConfigUsecases = 0b00000100000
-	FLAG_TRANSCRIPT       BackendConfigUsecases = 0b00001000000
-	FLAG_TTS              BackendConfigUsecases = 0b00010000000
-	FLAG_SOUND_GENERATION BackendConfigUsecases = 0b00100000000
-	FLAG_TOKENIZE         BackendConfigUsecases = 0b01000000000
-	FLAG_VAD              BackendConfigUsecases = 0b10000000000
+	FLAG_ANY              BackendConfigUsecases = 0b000000000000
+	FLAG_CHAT             BackendConfigUsecases = 0b000000000001
+	FLAG_COMPLETION       BackendConfigUsecases = 0b000000000010
+	FLAG_EDIT             BackendConfigUsecases = 0b000000000100
+	FLAG_EMBEDDINGS       BackendConfigUsecases = 0b000000001000
+	FLAG_RERANK           BackendConfigUsecases = 0b000000010000
+	FLAG_IMAGE            BackendConfigUsecases = 0b000000100000
+	FLAG_TRANSCRIPT       BackendConfigUsecases = 0b000001000000
+	FLAG_TTS              BackendConfigUsecases = 0b000010000000
+	FLAG_SOUND_GENERATION BackendConfigUsecases = 0b000100000000
+	FLAG_TOKENIZE         BackendConfigUsecases = 0b001000000000
+	FLAG_VAD              BackendConfigUsecases = 0b010000000000
+	FLAG_VIDEO            BackendConfigUsecases = 0b100000000000
 
 	// Common Subsets
 	FLAG_LLM BackendConfigUsecases = FLAG_CHAT | FLAG_COMPLETION | FLAG_EDIT
@@ -488,7 +477,12 @@ func GetAllBackendConfigUsecases() map[string]BackendConfigUsecases {
 		"FLAG_TOKENIZE":         FLAG_TOKENIZE,
 		"FLAG_VAD":              FLAG_VAD,
 		"FLAG_LLM":              FLAG_LLM,
+		"FLAG_VIDEO":            FLAG_VIDEO,
 	}
+}
+
+func stringToFlag(s string) string {
+	return "FLAG_" + strings.ToUpper(s)
 }
 
 func GetUsecasesFromYAML(input []string) *BackendConfigUsecases {
@@ -498,7 +492,7 @@ func GetUsecasesFromYAML(input []string) *BackendConfigUsecases {
 	result := FLAG_ANY
 	flags := GetAllBackendConfigUsecases()
 	for _, str := range input {
-		flag, exists := flags["FLAG_"+strings.ToUpper(str)]
+		flag, exists := flags[stringToFlag(str)]
 		if exists {
 			result |= flag
 		}
@@ -549,6 +543,17 @@ func (c *BackendConfig) GuessUsecases(u BackendConfigUsecases) bool {
 		}
 
 	}
+	if (u & FLAG_VIDEO) == FLAG_VIDEO {
+		videoBackends := []string{"diffusers", "stablediffusion"}
+		if !slices.Contains(videoBackends, c.Backend) {
+			return false
+		}
+
+		if c.Backend == "diffusers" && c.Diffusers.PipelineType == "" {
+			return false
+		}
+
+	}
 	if (u & FLAG_RERANK) == FLAG_RERANK {
 		if c.Backend != "rerankers" {
 			return false
@@ -560,7 +565,7 @@ func (c *BackendConfig) GuessUsecases(u BackendConfigUsecases) bool {
 		}
 	}
 	if (u & FLAG_TTS) == FLAG_TTS {
-		ttsBackends := []string{"piper", "transformers-musicgen", "parler-tts"}
+		ttsBackends := []string{"bark-cpp", "piper", "transformers-musicgen"}
 		if !slices.Contains(ttsBackends, c.Backend) {
 			return false
 		}

@@ -1,6 +1,6 @@
 package base
 
-// This is a wrapper to statisfy the GRPC service interface
+// This is a wrapper to satisfy the GRPC service interface
 // It is meant to be used by the main executable that is the server for the specific backend type (falcon, gpt3, etc)
 import (
 	"fmt"
@@ -50,6 +50,10 @@ func (llm *Base) Embeddings(opts *pb.PredictOptions) ([]float32, error) {
 }
 
 func (llm *Base) GenerateImage(*pb.GenerateImageRequest) error {
+	return fmt.Errorf("unimplemented")
+}
+
+func (llm *Base) GenerateVideo(*pb.GenerateVideoRequest) error {
 	return fmt.Errorf("unimplemented")
 }
 

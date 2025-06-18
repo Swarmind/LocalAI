@@ -1,10 +1,9 @@
-ARG IMAGE_TYPE=extras
 ARG BASE_IMAGE=ubuntu:22.04
 ARG GRPC_BASE_IMAGE=${BASE_IMAGE}
 ARG INTEL_BASE_IMAGE=${BASE_IMAGE}
 
 # The requirements-core target is common to all images.  It should not be placed in requirements-core unless every single build will use it.
-FROM ${BASE_IMAGE} AS requirements-core
+FROM ${BASE_IMAGE} AS requirements
 
 USER root
 
@@ -15,16 +14,16 @@ ARG TARGETARCH
 ARG TARGETVARIANT
 
 ENV DEBIAN_FRONTEND=noninteractive
-ENV EXTERNAL_GRPC_BACKENDS="coqui:/build/backend/python/coqui/run.sh,transformers:/build/backend/python/transformers/run.sh,rerankers:/build/backend/python/rerankers/run.sh,autogptq:/build/backend/python/autogptq/run.sh,bark:/build/backend/python/bark/run.sh,diffusers:/build/backend/python/diffusers/run.sh,faster-whisper:/build/backend/python/faster-whisper/run.sh,kokoro:/build/backend/python/kokoro/run.sh,vllm:/build/backend/python/vllm/run.sh,exllama2:/build/backend/python/exllama2/run.sh"
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
         build-essential \
         ccache \
-        ca-certificates \
+        ca-certificates espeak-ng \
         curl libssl-dev \
         git \
-        unzip upx-ucl && \
+        git-lfs \
+        unzip upx-ucl python3 python-is-python3 && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -45,9 +44,10 @@ EOT
 RUN curl -L -s https://go.dev/dl/go${GO_VERSION}.linux-${TARGETARCH}.tar.gz | tar -C /usr/local -xz
 ENV PATH=$PATH:/root/go/bin:/usr/local/go/bin
 
-# Install grpc compilers
+# Install grpc compilers and rice
 RUN go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.34.2 && \
-    go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@1958fcbe2ca8bd93af633f11e97d44e567e945af
+    go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@1958fcbe2ca8bd93af633f11e97d44e567e945af && \
+    go install github.com/GeertJohan/go.rice/rice@latest
 
 COPY --chmod=644 custom-ca-certs/* /usr/local/share/ca-certificates/
 RUN update-ca-certificates
@@ -74,38 +74,12 @@ RUN apt-get update && \
 
 WORKDIR /build
 
-###################################
-###################################
-
-# The requirements-extras target is for any builds with IMAGE_TYPE=extras. It should not be placed in this target unless every IMAGE_TYPE=extras build will use it
-FROM requirements-core AS requirements-extras
-
-# Install uv as a system package
-RUN curl -LsSf https://astral.sh/uv/install.sh | UV_INSTALL_DIR=/usr/bin sh
-ENV PATH="/root/.cargo/bin:${PATH}"
-
-RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends \
-        espeak-ng \
-        espeak \
-        python3-pip \
-        python-is-python3 \
-        python3-dev llvm \
-        python3-venv && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/* && \
-    pip install --upgrade pip
-
-# Install grpcio-tools (the version in 22.04 is too old)
-RUN pip install --user grpcio-tools
 
 ###################################
 ###################################
 
 # The requirements-drivers target is for BUILD_TYPE specific items.  If you need to install something specific to CUDA, or specific to ROCM, it goes here.
-# This target will be built on top of requirements-core or requirements-extras as retermined by the IMAGE_TYPE build-arg
-FROM requirements-${IMAGE_TYPE} AS requirements-drivers
+FROM requirements AS requirements-drivers
 
 ARG BUILD_TYPE
 ARG CUDA_MAJOR_VERSION=12
@@ -283,26 +257,45 @@ EOT
 ###################################
 ###################################
 
-# The builder target compiles LocalAI. This target is not the target that will be uploaded to the registry.
-# Adjustments to the build process should likely be made here.
-FROM builder-base AS builder
+# Compile backends first in a separate stage
+FROM builder-base AS builder-backends
 
-# Install the pre-built GRPC
 COPY --from=grpc /opt/grpc /usr/local
 
-# Rebuild with defaults backends
+WORKDIR /build
+
+COPY ./Makefile .
+COPY ./backend ./backend
+COPY ./go.mod .
+COPY ./go.sum .
+COPY ./.git ./.git
+
+# Some of the Go backends use libs from the main src, we could further optimize the caching by building the CPP backends before here
+COPY ./pkg/grpc ./pkg/grpc
+COPY ./pkg/utils ./pkg/utils
+COPY ./pkg/langchain ./pkg/langchain
+
+RUN ls -l ./
+RUN make backend-assets
+RUN make prepare
+RUN if [ "${TARGETARCH}" = "arm64" ] || [ "${BUILD_TYPE}" = "hipblas" ]; then \
+        SKIP_GRPC_BACKEND="backend-assets/grpc/llama-cpp-avx512 backend-assets/grpc/llama-cpp-avx backend-assets/grpc/llama-cpp-avx2" make grpcs; \
+    else \
+        make grpcs; \
+    fi
+
+# The builder target compiles LocalAI. This target is not the target that will be uploaded to the registry.
+# Adjustments to the build process should likely be made here.
+FROM builder-backends AS builder
+
 WORKDIR /build
 
 COPY . .
-COPY .git .
-
-RUN make prepare
 
 ## Build the binary
-## If it's CUDA or hipblas, we want to skip some of the llama-compat backends to save space
-## We only leave the most CPU-optimized variant and the fallback for the cublas/hipblas build
-## (both will use CUDA or hipblas for the actual computation)
-RUN if [ "${BUILD_TYPE}" = "cublas" ] || [ "${BUILD_TYPE}" = "hipblas" ]; then \
+## If we're on arm64 AND using cublas/hipblas, skip some of the llama-compat backends to save space
+## Otherwise just run the normal build
+RUN if [ "${TARGETARCH}" = "arm64" ] || [ "${BUILD_TYPE}" = "hipblas" ]; then \
         SKIP_GRPC_BACKEND="backend-assets/grpc/llama-cpp-avx512 backend-assets/grpc/llama-cpp-avx backend-assets/grpc/llama-cpp-avx2" make build; \
     else \
         make build; \
@@ -355,8 +348,6 @@ FROM requirements-drivers
 ARG FFMPEG
 ARG BUILD_TYPE
 ARG TARGETARCH
-ARG IMAGE_TYPE=extras
-ARG EXTRA_BACKENDS
 ARG MAKEFLAGS
 
 ENV BUILD_TYPE=${BUILD_TYPE}
@@ -389,64 +380,19 @@ COPY . .
 COPY --from=builder /build/sources ./sources/
 COPY --from=grpc /opt/grpc /usr/local
 
-RUN make prepare-sources
-
 # Copy the binary
 COPY --from=builder /build/local-ai ./
 
 # Copy shared libraries for piper
 COPY --from=builder /build/sources/go-piper/piper-phonemize/pi/lib/* /usr/lib/
 
-# Change the shell to bash so we can use [[ tests below
-SHELL ["/bin/bash", "-c"]
-# We try to strike a balance between individual layer size (as that affects total push time) and total image size
-# Splitting the backends into more groups with fewer items results in a larger image, but a smaller size for the largest layer
-# Splitting the backends into fewer groups with more items results in a smaller image, but a larger size for the largest layer
-
-RUN if [[ ( "${IMAGE_TYPE}" == "extras ")]]; then \
-        apt-get -qq -y install espeak-ng \
-    ; fi
-
-RUN if [[ ( "${EXTRA_BACKENDS}" =~ "coqui" || -z "${EXTRA_BACKENDS}" ) && "$IMAGE_TYPE" == "extras" ]]; then \
-        make -C backend/python/coqui \
-    ; fi && \
-    if [[ ( "${EXTRA_BACKENDS}" =~ "faster-whisper" || -z "${EXTRA_BACKENDS}" ) && "$IMAGE_TYPE" == "extras" ]]; then \
-        make -C backend/python/faster-whisper \
-    ; fi && \
-    if [[ ( "${EXTRA_BACKENDS}" =~ "diffusers" || -z "${EXTRA_BACKENDS}" ) && "$IMAGE_TYPE" == "extras" ]]; then \
-        make -C backend/python/diffusers \
-    ; fi
-
-RUN if [[ ( "${EXTRA_BACKENDS}" =~ "kokoro" || -z "${EXTRA_BACKENDS}" ) && "$IMAGE_TYPE" == "extras" ]]; then \
-        make -C backend/python/kokoro \
-    ; fi && \
-    if [[ ( "${EXTRA_BACKENDS}" =~ "exllama2" || -z "${EXTRA_BACKENDS}" ) && "$IMAGE_TYPE" == "extras" ]]; then \
-        make -C backend/python/exllama2 \
-    ; fi && \
-    if [[ ( "${EXTRA_BACKENDS}" =~ "transformers" || -z "${EXTRA_BACKENDS}" ) && "$IMAGE_TYPE" == "extras" ]]; then \
-        make -C backend/python/transformers \
-    ; fi
-
-RUN if [[ ( "${EXTRA_BACKENDS}" =~ "vllm" || -z "${EXTRA_BACKENDS}" ) && "$IMAGE_TYPE" == "extras" ]]; then \
-        make -C backend/python/vllm \
-    ; fi && \
-    if [[ ( "${EXTRA_BACKENDS}" =~ "autogptq" || -z "${EXTRA_BACKENDS}" ) && "$IMAGE_TYPE" == "extras" ]]; then \
-        make -C backend/python/autogptq \
-    ; fi && \
-    if [[ ( "${EXTRA_BACKENDS}" =~ "bark" || -z "${EXTRA_BACKENDS}" ) && "$IMAGE_TYPE" == "extras" ]]; then \
-        make -C backend/python/bark \
-    ; fi && \
-    if [[ ( "${EXTRA_BACKENDS}" =~ "rerankers" || -z "${EXTRA_BACKENDS}" ) && "$IMAGE_TYPE" == "extras" ]]; then \
-        make -C backend/python/rerankers \
-    ; fi
-
 # Make sure the models directory exists
-RUN mkdir -p /build/models
+RUN mkdir -p /build/models /build/backends
 
 # Define the health check command
 HEALTHCHECK --interval=1m --timeout=10m --retries=10 \
   CMD curl -f ${HEALTHCHECK_ENDPOINT} || exit 1
 
-VOLUME /build/models
+VOLUME /build/models /build/backends
 EXPOSE 8080
 ENTRYPOINT [ "/build/entrypoint.sh" ]

@@ -30,10 +30,16 @@ func RegisterLocalAIRoutes(router *fiber.App,
 
 		router.Get("/models/available", modelGalleryEndpointService.ListModelFromGalleryEndpoint())
 		router.Get("/models/galleries", modelGalleryEndpointService.ListModelGalleriesEndpoint())
-		router.Post("/models/galleries", modelGalleryEndpointService.AddModelGalleryEndpoint())
-		router.Delete("/models/galleries", modelGalleryEndpointService.RemoveModelGalleryEndpoint())
 		router.Get("/models/jobs/:uuid", modelGalleryEndpointService.GetOpStatusEndpoint())
 		router.Get("/models/jobs", modelGalleryEndpointService.GetAllStatusEndpoint())
+
+		backendGalleryEndpointService := localai.CreateBackendEndpointService(appConfig.BackendGalleries, appConfig.BackendsPath, galleryService)
+		router.Post("/backends/apply", backendGalleryEndpointService.ApplyBackendEndpoint())
+		router.Post("/backends/delete/:name", backendGalleryEndpointService.DeleteBackendEndpoint())
+		router.Get("/backends", backendGalleryEndpointService.ListBackendsEndpoint())
+		router.Get("/backends/available", backendGalleryEndpointService.ListAvailableBackendsEndpoint())
+		router.Get("/backends/galleries", backendGalleryEndpointService.ListBackendGalleriesEndpoint())
+		router.Get("/backends/jobs/:uuid", backendGalleryEndpointService.GetOpStatusEndpoint())
 	}
 
 	router.Post("/tts",
@@ -50,15 +56,19 @@ func RegisterLocalAIRoutes(router *fiber.App,
 	router.Post("/v1/vad", vadChain...)
 
 	// Stores
-	sl := model.NewModelLoader("")
-	router.Post("/stores/set", localai.StoresSetEndpoint(sl, appConfig))
-	router.Post("/stores/delete", localai.StoresDeleteEndpoint(sl, appConfig))
-	router.Post("/stores/get", localai.StoresGetEndpoint(sl, appConfig))
-	router.Post("/stores/find", localai.StoresFindEndpoint(sl, appConfig))
+	router.Post("/stores/set", localai.StoresSetEndpoint(ml, appConfig))
+	router.Post("/stores/delete", localai.StoresDeleteEndpoint(ml, appConfig))
+	router.Post("/stores/get", localai.StoresGetEndpoint(ml, appConfig))
+	router.Post("/stores/find", localai.StoresFindEndpoint(ml, appConfig))
 
 	if !appConfig.DisableMetrics {
 		router.Get("/metrics", localai.LocalAIMetricsEndpoint())
 	}
+
+	router.Post("/video",
+		requestExtractor.BuildFilteredFirstAvailableDefaultModel(config.BuildUsecaseFilterFn(config.FLAG_VIDEO)),
+		requestExtractor.SetModelAndConfig(func() schema.LocalAIRequest { return new(schema.VideoRequest) }),
+		localai.VideoEndpoint(cl, ml, appConfig))
 
 	// Backend Statistics Module
 	// TODO: Should these use standard middlewares? Refactor later, they are extremely simple.

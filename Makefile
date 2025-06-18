@@ -6,11 +6,11 @@ BINARY_NAME=local-ai
 DETECT_LIBS?=true
 
 # llama.cpp versions
-CPPLLAMA_VERSION?=63e489c025d61c7ca5ec06c5d10f36e2b76aaa1d
+CPPLLAMA_VERSION?=860a9e4eeff3eb2e7bd1cc38f65787cc6c8177af
 
 # whisper.cpp version
-WHISPER_REPO?=https://github.com/ggerganov/whisper.cpp
-WHISPER_CPP_VERSION?=6266a9f9e56a5b925e9892acf650f3eb1245814d
+WHISPER_REPO?=https://github.com/ggml-org/whisper.cpp
+WHISPER_CPP_VERSION?=f3ff80ea8da044e5b8833e7ba54ee174504c518d
 
 # go-piper version
 PIPER_REPO?=https://github.com/mudler/go-piper
@@ -21,8 +21,11 @@ BARKCPP_REPO?=https://github.com/PABannier/bark.cpp.git
 BARKCPP_VERSION?=v1.0.0
 
 # stablediffusion.cpp (ggml)
-STABLEDIFFUSION_GGML_REPO?=https://github.com/leejet/stable-diffusion.cpp
-STABLEDIFFUSION_GGML_VERSION?=d46ed5e184b97c2018dc2e8105925bdb8775e02c
+STABLEDIFFUSION_GGML_REPO?=https://github.com/richiejp/stable-diffusion.cpp
+STABLEDIFFUSION_GGML_VERSION?=53e3b17eb3d0b5760ced06a1f98320b68b34aaae
+
+# ONEAPI variables for SYCL
+export ONEAPI_VARS?=/opt/intel/oneapi/setvars.sh
 
 ONNX_VERSION?=1.20.0
 ONNX_ARCH?=x64
@@ -30,8 +33,12 @@ ONNX_OS?=linux
 
 export BUILD_TYPE?=
 export STABLE_BUILD_TYPE?=$(BUILD_TYPE)
-export CMAKE_ARGS?=
+export CMAKE_ARGS?=-DBUILD_SHARED_LIBS=OFF
+export WHISPER_CMAKE_ARGS?=-DBUILD_SHARED_LIBS=OFF
 export BACKEND_LIBS?=
+export WHISPER_DIR=$(abspath ./sources/whisper.cpp)
+export WHISPER_INCLUDE_PATH=$(WHISPER_DIR)/include:$(WHISPER_DIR)/ggml/include
+export WHISPER_LIBRARY_PATH=$(WHISPER_DIR)/build/src/:$(WHISPER_DIR)/build/ggml/src
 
 CGO_LDFLAGS?=
 CGO_LDFLAGS_WHISPER?=
@@ -81,6 +88,7 @@ endif
 # IF native is false, we add -DGGML_NATIVE=OFF to CMAKE_ARGS
 ifeq ($(NATIVE),false)
 	CMAKE_ARGS+=-DGGML_NATIVE=OFF
+	WHISPER_CMAKE_ARGS+=-DGGML_NATIVE=OFF
 endif
 
 # Detect if we are running on arm64
@@ -108,13 +116,31 @@ ifeq ($(OS),Darwin)
 	# disable metal if on Darwin and any other value is explicitly passed.
 	else ifneq ($(BUILD_TYPE),metal)
 		CMAKE_ARGS+=-DGGML_METAL=OFF
+		WHISPER_CMAKE_ARGS+=-DGGML_METAL=OFF
 		export GGML_NO_ACCELERATE=1
 		export GGML_NO_METAL=1
+		GO_LDFLAGS_WHISPER+=-lggml-blas
+		export WHISPER_LIBRARY_PATH:=$(WHISPER_LIBRARY_PATH):$(WHISPER_DIR)/build/ggml/src/ggml-blas
 	endif
 
 	ifeq ($(BUILD_TYPE),metal)
-#			-lcblas 	removed: it seems to always be listed as a duplicate flag.
 		CGO_LDFLAGS += -framework Accelerate
+		CGO_LDFLAGS_WHISPER+=-lggml-metal -lggml-blas
+		CMAKE_ARGS+=-DGGML_METAL=ON
+		CMAKE_ARGS+=-DGGML_METAL_USE_BF16=ON
+		CMAKE_ARGS+=-DGGML_METAL_EMBED_LIBRARY=ON
+		CMAKE_ARGS+=-DGGML_OPENMP=OFF
+		WHISPER_CMAKE_ARGS+=-DGGML_METAL=ON
+		WHISPER_CMAKE_ARGS+=-DGGML_METAL_USE_BF16=ON
+		WHISPER_CMAKE_ARGS+=-DGGML_METAL_EMBED_LIBRARY=ON
+		WHISPER_CMAKE_ARGS+=-DWHISPER_BUILD_EXAMPLES=OFF
+		WHISPER_CMAKE_ARGS+=-DWHISPER_BUILD_TESTS=OFF
+		WHISPER_CMAKE_ARGS+=-DWHISPER_BUILD_SERVER=OFF
+		WHISPER_CMAKE_ARGS+=-DGGML_OPENMP=OFF
+		export WHISPER_LIBRARY_PATH:=$(WHISPER_LIBRARY_PATH):$(WHISPER_DIR)/build/ggml/src/ggml-metal/:$(WHISPER_DIR)/build/ggml/src/ggml-blas
+	else
+		CGO_LDFLAGS_WHISPER+=-lggml-blas
+		export WHISPER_LIBRARY_PATH:=$(WHISPER_LIBRARY_PATH):$(WHISPER_DIR)/build/ggml/src/ggml-blas
 	endif
 else
 CGO_LDFLAGS_WHISPER+=-lgomp
@@ -126,21 +152,29 @@ ifeq ($(BUILD_TYPE),openblas)
 endif
 
 ifeq ($(BUILD_TYPE),cublas)
-	CGO_LDFLAGS+=-lcublas -lcudart -L$(CUDA_LIBPATH)
+	CGO_LDFLAGS+=-lcublas -lcudart -L$(CUDA_LIBPATH) -L$(CUDA_LIBPATH)/stubs/ -lcuda
 	export GGML_CUDA=1
-	CGO_LDFLAGS_WHISPER+=-L$(CUDA_LIBPATH)/stubs/ -lcuda -lcufft
+	CMAKE_ARGS+=-DGGML_CUDA=ON
+	WHISPER_CMAKE_ARGS+=-DGGML_CUDA=ON
+	CGO_LDFLAGS_WHISPER+=-lcufft -lggml-cuda
+	export WHISPER_LIBRARY_PATH:=$(WHISPER_LIBRARY_PATH):$(WHISPER_DIR)/build/ggml/src/ggml-cuda/
 endif
 
 ifeq ($(BUILD_TYPE),vulkan)
 	CMAKE_ARGS+=-DGGML_VULKAN=1
+	WHISPER_CMAKE_ARGS+=-DGGML_VULKAN=1
+	CGO_LDFLAGS_WHISPER+=-lggml-vulkan -lvulkan
+	export WHISPER_LIBRARY_PATH:=$(WHISPER_LIBRARY_PATH):$(WHISPER_DIR)/build/ggml/src/ggml-vulkan/
 endif
 
 ifneq (,$(findstring sycl,$(BUILD_TYPE)))
 	export GGML_SYCL=1
+	CMAKE_ARGS+=-DGGML_SYCL=ON
 endif
 
 ifeq ($(BUILD_TYPE),sycl_f16)
 	export GGML_SYCL_F16=1
+	CMAKE_ARGS+=-DGGML_SYCL_F16=ON
 endif
 
 ifeq ($(BUILD_TYPE),hipblas)
@@ -151,7 +185,7 @@ ifeq ($(BUILD_TYPE),hipblas)
 	export CC=$(ROCM_HOME)/llvm/bin/clang
 	export STABLE_BUILD_TYPE=
 	export GGML_HIP=1
-	GPU_TARGETS ?= gfx900,gfx906,gfx908,gfx940,gfx941,gfx942,gfx90a,gfx1030,gfx1031,gfx1100,gfx1101
+	GPU_TARGETS ?= gfx803,gfx900,gfx906,gfx908,gfx90a,gfx942,gfx1010,gfx1030,gfx1032,gfx1100,gfx1101,gfx1102
 	AMDGPU_TARGETS ?= "$(GPU_TARGETS)"
 	CMAKE_ARGS+=-DGGML_HIP=ON -DAMDGPU_TARGETS="$(AMDGPU_TARGETS)" -DGPU_TARGETS="$(GPU_TARGETS)"
 	CGO_LDFLAGS += -O3 --rtlib=compiler-rt -unwindlib=libgcc -lhipblas -lrocblas --hip-link -L${ROCM_HOME}/lib/llvm/lib
@@ -260,11 +294,7 @@ backend/go/image/stablediffusion-ggml/libsd.a: sources/stablediffusion-ggml.cpp
 	$(MAKE) -C backend/go/image/stablediffusion-ggml libsd.a
 
 backend-assets/grpc/stablediffusion-ggml: backend/go/image/stablediffusion-ggml/libsd.a backend-assets/grpc
-	CGO_LDFLAGS="$(CGO_LDFLAGS)" C_INCLUDE_PATH=$(CURDIR)/backend/go/image/stablediffusion-ggml/ LIBRARY_PATH=$(CURDIR)/backend/go/image/stablediffusion-ggml/ \
-	$(GOCMD) build -ldflags "$(LD_FLAGS)" -tags "$(GO_TAGS)" -o backend-assets/grpc/stablediffusion-ggml ./backend/go/image/stablediffusion-ggml/
-ifneq ($(UPX),)
-	$(UPX) backend-assets/grpc/stablediffusion-ggml
-endif
+	$(MAKE) -C backend/go/image/stablediffusion-ggml CGO_LDFLAGS="$(CGO_LDFLAGS)" stablediffusion-ggml
 
 sources/onnxruntime:
 	mkdir -p sources/onnxruntime
@@ -290,8 +320,9 @@ sources/whisper.cpp:
 	git checkout $(WHISPER_CPP_VERSION) && \
 	git submodule update --init --recursive --depth 1 --single-branch
 
-sources/whisper.cpp/libwhisper.a: sources/whisper.cpp
-	cd sources/whisper.cpp && $(MAKE) libwhisper.a libggml.a
+sources/whisper.cpp/build/src/libwhisper.a: sources/whisper.cpp
+	cd sources/whisper.cpp && cmake $(WHISPER_CMAKE_ARGS) . -B ./build
+	cd sources/whisper.cpp/build && cmake --build . --config Release
 
 get-sources: sources/go-piper sources/stablediffusion-ggml.cpp sources/bark.cpp sources/whisper.cpp backend/cpp/llama/llama.cpp
 
@@ -341,8 +372,14 @@ clean-tests:
 clean-dc: clean
 	cp -r /build/backend-assets /workspace/backend-assets
 
+## Install Go tools
+install-go-tools:
+	go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@1958fcbe2ca8bd93af633f11e97d44e567e945af
+	go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.34.2
+	go install github.com/GeertJohan/go.rice/rice@latest
+
 ## Build:
-build: prepare backend-assets grpcs ## Build the project
+build: prepare backend-assets grpcs install-go-tools ## Build the project
 	$(info ${GREEN}I local-ai build info:${RESET})
 	$(info ${GREEN}I BUILD_TYPE: ${YELLOW}$(BUILD_TYPE)${RESET})
 	$(info ${GREEN}I GO_TAGS: ${YELLOW}$(GO_TAGS)${RESET})
@@ -352,7 +389,9 @@ ifneq ($(BACKEND_LIBS),)
 	$(MAKE) backend-assets/lib
 	cp -f $(BACKEND_LIBS) backend-assets/lib/
 endif
+	rm -rf $(BINARY_NAME) || true
 	CGO_LDFLAGS="$(CGO_LDFLAGS)" $(GOCMD) build -ldflags "$(LD_FLAGS)" -tags "$(GO_TAGS)" -o $(BINARY_NAME) ./
+	rice append --exec $(BINARY_NAME)
 
 build-minimal:
 	BUILD_GRPC_FOR_BACKEND_LLAMA=true GRPC_BACKENDS="backend-assets/grpc/llama-cpp-avx2" GO_TAGS=p2p $(MAKE) build
@@ -414,7 +453,7 @@ run: prepare ## run local-ai
 test-models/testmodel.ggml:
 	mkdir test-models
 	mkdir test-dir
-	wget -q https://huggingface.co/RichardErkhov/Qwen_-_Qwen2-1.5B-Instruct-gguf/resolve/main/Qwen2-1.5B-Instruct.Q2_K.gguf -O test-models/testmodel.ggml
+	wget -q https://huggingface.co/mradermacher/gpt2-alpaca-gpt4-GGUF/resolve/main/gpt2-alpaca-gpt4.Q4_K_M.gguf -O test-models/testmodel.ggml
 	wget -q https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin -O test-models/whisper-en
 	wget -q https://huggingface.co/mudler/all-MiniLM-L6-v2/resolve/main/ggml-model-q4_0.bin -O test-models/bert
 	wget -q https://cdn.openai.com/whisper/draft-20220913a/micro-machines.wav -O test-dir/audio.wav
@@ -424,6 +463,7 @@ prepare-test: grpcs
 	cp -rf backend-assets core/http
 	cp tests/models_fixtures/* test-models
 
+## Test targets
 test: prepare test-models/testmodel.ggml grpcs
 	@echo 'Running tests'
 	export GO_TAGS="tts debug"
@@ -498,7 +538,7 @@ protogen: protogen-go protogen-python
 protogen-clean: protogen-go-clean protogen-python-clean
 
 .PHONY: protogen-go
-protogen-go:
+protogen-go: install-go-tools
 	mkdir -p pkg/grpc/proto
 	protoc --experimental_allow_proto3_optional -Ibackend/ --go_out=pkg/grpc/proto/ --go_opt=paths=source_relative --go-grpc_out=pkg/grpc/proto/ --go-grpc_opt=paths=source_relative \
     backend/backend.proto
@@ -509,18 +549,10 @@ protogen-go-clean:
 	$(RM) bin/*
 
 .PHONY: protogen-python
-protogen-python: autogptq-protogen bark-protogen coqui-protogen diffusers-protogen exllama2-protogen rerankers-protogen transformers-protogen kokoro-protogen vllm-protogen faster-whisper-protogen
+protogen-python: bark-protogen coqui-protogen chatterbox-protogen diffusers-protogen exllama2-protogen rerankers-protogen transformers-protogen kokoro-protogen vllm-protogen faster-whisper-protogen
 
 .PHONY: protogen-python-clean
-protogen-python-clean: autogptq-protogen-clean bark-protogen-clean coqui-protogen-clean diffusers-protogen-clean  exllama2-protogen-clean rerankers-protogen-clean transformers-protogen-clean kokoro-protogen-clean vllm-protogen-clean faster-whisper-protogen-clean
-
-.PHONY: autogptq-protogen
-autogptq-protogen:
-	$(MAKE) -C backend/python/autogptq protogen
-
-.PHONY: autogptq-protogen-clean
-autogptq-protogen-clean:
-	$(MAKE) -C backend/python/autogptq protogen-clean
+protogen-python-clean: bark-protogen-clean coqui-protogen-clean chatterbox-protogen-clean diffusers-protogen-clean  exllama2-protogen-clean rerankers-protogen-clean transformers-protogen-clean kokoro-protogen-clean vllm-protogen-clean faster-whisper-protogen-clean
 
 .PHONY: bark-protogen
 bark-protogen:
@@ -542,9 +574,17 @@ coqui-protogen-clean:
 diffusers-protogen:
 	$(MAKE) -C backend/python/diffusers protogen
 
+.PHONY: chatterbox-protogen
+chatterbox-protogen:
+	$(MAKE) -C backend/python/chatterbox protogen
+
 .PHONY: diffusers-protogen-clean
 diffusers-protogen-clean:
 	$(MAKE) -C backend/python/diffusers protogen-clean
+
+.PHONY: chatterbox-protogen-clean
+chatterbox-protogen-clean:
+	$(MAKE) -C backend/python/chatterbox protogen-clean
 
 .PHONY: faster-whisper-protogen
 faster-whisper-protogen:
@@ -597,10 +637,10 @@ vllm-protogen-clean:
 ## GRPC
 # Note: it is duplicated in the Dockerfile
 prepare-extra-conda-environments: protogen-python
-	$(MAKE) -C backend/python/autogptq
 	$(MAKE) -C backend/python/bark
 	$(MAKE) -C backend/python/coqui
 	$(MAKE) -C backend/python/diffusers
+	$(MAKE) -C backend/python/chatterbox
 	$(MAKE) -C backend/python/faster-whisper
 	$(MAKE) -C backend/python/vllm
 	$(MAKE) -C backend/python/rerankers
@@ -611,10 +651,14 @@ prepare-extra-conda-environments: protogen-python
 prepare-test-extra: protogen-python
 	$(MAKE) -C backend/python/transformers
 	$(MAKE) -C backend/python/diffusers
+	$(MAKE) -C backend/python/chatterbox
+	$(MAKE) -C backend/python/vllm
 
 test-extra: prepare-test-extra
 	$(MAKE) -C backend/python/transformers test
 	$(MAKE) -C backend/python/diffusers test
+	$(MAKE) -C backend/python/chatterbox test
+	$(MAKE) -C backend/python/vllm test
 
 backend-assets:
 	mkdir -p backend-assets
@@ -756,8 +800,8 @@ ifneq ($(UPX),)
 	$(UPX) backend-assets/grpc/silero-vad
 endif
 
-backend-assets/grpc/whisper: sources/whisper.cpp sources/whisper.cpp/libwhisper.a backend-assets/grpc
-	CGO_LDFLAGS="$(CGO_LDFLAGS) $(CGO_LDFLAGS_WHISPER)" C_INCLUDE_PATH="$(CURDIR)/sources/whisper.cpp/include:$(CURDIR)/sources/whisper.cpp/ggml/include" LIBRARY_PATH=$(CURDIR)/sources/whisper.cpp \
+backend-assets/grpc/whisper: sources/whisper.cpp sources/whisper.cpp/build/src/libwhisper.a backend-assets/grpc
+	CGO_LDFLAGS="$(CGO_LDFLAGS) $(CGO_LDFLAGS_WHISPER)" C_INCLUDE_PATH="${WHISPER_INCLUDE_PATH}" LIBRARY_PATH="${WHISPER_LIBRARY_PATH}" LD_LIBRARY_PATH="${WHISPER_LIBRARY_PATH}" \
 	$(GOCMD) build -ldflags "$(LD_FLAGS)" -tags "$(GO_TAGS)" -o backend-assets/grpc/whisper ./backend/go/transcribe/whisper
 ifneq ($(UPX),)
 	$(UPX) backend-assets/grpc/whisper
@@ -809,17 +853,17 @@ docker-aio-all:
 
 docker-image-intel:
 	docker build \
-		--build-arg BASE_IMAGE=intel/oneapi-basekit:2025.0.0-0-devel-ubuntu22.04 \
+		--build-arg BASE_IMAGE=intel/oneapi-basekit:2025.1.0-0-devel-ubuntu24.04 \
 		--build-arg IMAGE_TYPE=$(IMAGE_TYPE) \
-		--build-arg GO_TAGS="none" \
+		--build-arg GO_TAGS="$(GO_TAGS)" \
 		--build-arg MAKEFLAGS="$(DOCKER_MAKEFLAGS)" \
 		--build-arg BUILD_TYPE=sycl_f32 -t $(DOCKER_IMAGE) .
 
 docker-image-intel-xpu:
 	docker build \
-		--build-arg BASE_IMAGE=intel/oneapi-basekit:2025.0.0-0-devel-ubuntu22.04 \
+		--build-arg BASE_IMAGE=intel/oneapi-basekit:2025.1.0-0-devel-ubuntu22.04 \
 		--build-arg IMAGE_TYPE=$(IMAGE_TYPE) \
-		--build-arg GO_TAGS="none" \
+		--build-arg GO_TAGS="$(GO_TAGS)" \
 		--build-arg MAKEFLAGS="$(DOCKER_MAKEFLAGS)" \
 		--build-arg BUILD_TYPE=sycl_f32 -t $(DOCKER_IMAGE) .
 

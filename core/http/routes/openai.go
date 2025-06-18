@@ -15,6 +15,12 @@ func RegisterOpenAIRoutes(app *fiber.App,
 	application *application.Application) {
 	// openAI compatible API endpoint
 
+	// realtime
+	// TODO: Modify/disable the API key middleware for this endpoint to allow ephemeral keys created by sessions
+	app.Get("/v1/realtime", openai.Realtime(application))
+	app.Post("/v1/realtime/sessions", openai.RealtimeTranscriptionSession(application))
+	app.Post("/v1/realtime/transcription_session", openai.RealtimeTranscriptionSession(application))
+
 	// chat
 	chatChain := []fiber.Handler{
 		re.BuildFilteredFirstAvailableDefaultModel(config.BuildUsecaseFilterFn(config.FLAG_CHAT)),
@@ -111,14 +117,6 @@ func RegisterOpenAIRoutes(app *fiber.App,
 		re.SetModelAndConfig(func() schema.LocalAIRequest { return new(schema.OpenAIRequest) }),
 		re.SetOpenAIRequest,
 		openai.ImageEndpoint(application.BackendLoader(), application.ModelLoader(), application.ApplicationConfig()))
-
-	if application.ApplicationConfig().ImageDir != "" {
-		app.Static("/generated-images", application.ApplicationConfig().ImageDir)
-	}
-
-	if application.ApplicationConfig().AudioDir != "" {
-		app.Static("/generated-audio", application.ApplicationConfig().AudioDir)
-	}
 
 	// List models
 	app.Get("/v1/models", openai.ListModelsEndpoint(application.BackendLoader(), application.ModelLoader(), application.ApplicationConfig()))

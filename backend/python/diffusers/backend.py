@@ -19,7 +19,7 @@ import grpc
 
 from diffusers import SanaPipeline, StableDiffusion3Pipeline, StableDiffusionXLPipeline, StableDiffusionDepth2ImgPipeline, DPMSolverMultistepScheduler, StableDiffusionPipeline, DiffusionPipeline, \
     EulerAncestralDiscreteScheduler, FluxPipeline, FluxTransformer2DModel
-from diffusers import StableDiffusionImg2ImgPipeline, AutoPipelineForText2Image, ControlNetModel, StableVideoDiffusionPipeline
+from diffusers import StableDiffusionImg2ImgPipeline, AutoPipelineForText2Image, ControlNetModel, StableVideoDiffusionPipeline, Lumina2Text2ImgPipeline
 from diffusers.pipelines.stable_diffusion import safety_checker
 from diffusers.utils import load_image, export_to_video
 from compel import Compel, ReturnedEmbeddingsType
@@ -168,8 +168,12 @@ class BackendServicer(backend_pb2_grpc.BackendServicer):
             # We are storing all the options in a dict so we can use it later when
             # generating the images
             for opt in options:
+                if ":" not in opt:
+                    continue
                 key, value = opt.split(":")
                 self.options[key] = value
+
+            print(f"Options: {self.options}", file=sys.stderr)
 
             local = False
             modelFile = request.Model
@@ -287,6 +291,12 @@ class BackendServicer(backend_pb2_grpc.BackendServicer):
 
                     if request.LowVRAM:
                         self.pipe.enable_model_cpu_offload()
+            elif request.PipelineType == "Lumina2Text2ImgPipeline":
+                self.pipe = Lumina2Text2ImgPipeline.from_pretrained(
+                    request.Model,
+                    torch_dtype=torch.bfloat16)
+                if request.LowVRAM:
+                    self.pipe.enable_model_cpu_offload()
             elif request.PipelineType == "SanaPipeline":
                 self.pipe = SanaPipeline.from_pretrained(
                     request.Model,
@@ -516,7 +526,12 @@ class BackendServicer(backend_pb2_grpc.BackendServicer):
 
 
 def serve(address):
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=MAX_WORKERS))
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=MAX_WORKERS),
+        options=[
+            ('grpc.max_message_length', 50 * 1024 * 1024),  # 50MB
+            ('grpc.max_send_message_length', 50 * 1024 * 1024),  # 50MB
+            ('grpc.max_receive_message_length', 50 * 1024 * 1024),  # 50MB
+        ])
     backend_pb2_grpc.add_BackendServicer_to_server(BackendServicer(), server)
     server.add_insecure_port(address)
     server.start()

@@ -203,16 +203,8 @@ func mergeOpenAIRequestAndBackendConfig(config *config.BackendConfig, input *sch
 		config.Diffusers.ClipSkip = input.ClipSkip
 	}
 
-	if input.ModelBaseName != "" {
-		config.AutoGPTQ.ModelBaseName = input.ModelBaseName
-	}
-
 	if input.NegativePromptScale != 0 {
 		config.NegativePromptScale = input.NegativePromptScale
-	}
-
-	if input.UseFastTokenizer {
-		config.UseFastTokenizer = input.UseFastTokenizer
 	}
 
 	if input.NegativePrompt != "" {
@@ -316,11 +308,11 @@ func mergeOpenAIRequestAndBackendConfig(config *config.BackendConfig, input *sch
 					input.Messages[i].StringVideos = append(input.Messages[i].StringVideos, base64) // TODO: make sure that we only return base64 stuff
 					vidIndex++
 					nrOfVideosInMessage++
-				case "audio_url", "audio":
+				case "audio_url", "audio", "input_audio":
 					// Decode content as base64 either if it's an URL or base64 text
 					base64, err := utils.GetContentURIAsBase64(pp.AudioURL.URL)
 					if err != nil {
-						log.Error().Msgf("Failed encoding image: %s", err)
+						log.Error().Msgf("Failed encoding audio: %s", err)
 						continue CONTENT
 					}
 					input.Messages[i].StringAudios = append(input.Messages[i].StringAudios, base64) // TODO: make sure that we only return base64 stuff
@@ -391,17 +383,28 @@ func mergeOpenAIRequestAndBackendConfig(config *config.BackendConfig, input *sch
 		if inputs != "" {
 			config.InputStrings = append(config.InputStrings, inputs)
 		}
-	case []interface{}:
+	case []any:
 		for _, pp := range inputs {
 			switch i := pp.(type) {
 			case string:
 				config.InputStrings = append(config.InputStrings, i)
-			case []interface{}:
+			case []any:
 				tokens := []int{}
+				inputStrings := []string{}
 				for _, ii := range i {
-					tokens = append(tokens, int(ii.(float64)))
+					switch ii := ii.(type) {
+					case int:
+						tokens = append(tokens, ii)
+					case float64:
+						tokens = append(tokens, int(ii))
+					case string:
+						inputStrings = append(inputStrings, ii)
+					default:
+						log.Error().Msgf("Unknown input type: %T", ii)
+					}
 				}
 				config.InputToken = append(config.InputToken, tokens)
+				config.InputStrings = append(config.InputStrings, inputStrings...)
 			}
 		}
 	}

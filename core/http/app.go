@@ -5,8 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 
 	"github.com/dave-gray101/v2keyauth"
+	"github.com/gofiber/websocket/v2"
 	"github.com/mudler/LocalAI/pkg/utils"
 
 	"github.com/mudler/LocalAI/core/http/endpoints/localai"
@@ -97,6 +100,15 @@ func API(application *application.Application) (*fiber.App, error) {
 		})
 	}
 
+	router.Use("/v1/realtime", func(c *fiber.Ctx) error {
+		if websocket.IsWebSocketUpgrade(c) {
+			// Returns true if the client requested upgrade to the WebSocket protocol
+			return c.Next()
+		}
+
+		return nil
+	})
+
 	router.Hooks().OnListen(func(listenData fiber.ListenData) error {
 		scheme := "http"
 		if listenData.TLS {
@@ -139,6 +151,35 @@ func API(application *application.Application) (*fiber.App, error) {
 		return nil, fmt.Errorf("failed to create key auth config: %w", err)
 	}
 
+	httpFS := http.FS(embedDirStatic)
+
+	router.Use(favicon.New(favicon.Config{
+		URL:        "/favicon.svg",
+		FileSystem: httpFS,
+		File:       "static/favicon.svg",
+	}))
+
+	router.Use("/static", filesystem.New(filesystem.Config{
+		Root:       httpFS,
+		PathPrefix: "static",
+		Browse:     true,
+	}))
+
+	if application.ApplicationConfig().GeneratedContentDir != "" {
+		os.MkdirAll(application.ApplicationConfig().GeneratedContentDir, 0750)
+		audioPath := filepath.Join(application.ApplicationConfig().GeneratedContentDir, "audio")
+		imagePath := filepath.Join(application.ApplicationConfig().GeneratedContentDir, "images")
+		videoPath := filepath.Join(application.ApplicationConfig().GeneratedContentDir, "videos")
+
+		os.MkdirAll(audioPath, 0750)
+		os.MkdirAll(imagePath, 0750)
+		os.MkdirAll(videoPath, 0750)
+
+		router.Static("/generated-audio", audioPath)
+		router.Static("/generated-images", imagePath)
+		router.Static("/generated-videos", videoPath)
+	}
+
 	// Auth is applied to _all_ endpoints. No exceptions. Filtering out endpoints to bypass is the role of the Filter property of the KeyAuth Configuration
 	router.Use(v2keyauth.New(*kaConfig))
 
@@ -163,7 +204,7 @@ func API(application *application.Application) (*fiber.App, error) {
 	utils.LoadConfig(application.ApplicationConfig().ConfigsDir, openai.AssistantsConfigFile, &openai.Assistants)
 	utils.LoadConfig(application.ApplicationConfig().ConfigsDir, openai.AssistantsFileConfigFile, &openai.AssistantFiles)
 
-	galleryService := services.NewGalleryService(application.ApplicationConfig())
+	galleryService := services.NewGalleryService(application.ApplicationConfig(), application.ModelLoader())
 	galleryService.Start(application.ApplicationConfig().Context, application.BackendLoader())
 
 	requestExtractor := middleware.NewRequestExtractor(application.BackendLoader(), application.ModelLoader(), application.ApplicationConfig())
@@ -175,20 +216,6 @@ func API(application *application.Application) (*fiber.App, error) {
 		routes.RegisterUIRoutes(router, application.BackendLoader(), application.ModelLoader(), application.ApplicationConfig(), galleryService)
 	}
 	routes.RegisterJINARoutes(router, requestExtractor, application.BackendLoader(), application.ModelLoader(), application.ApplicationConfig())
-
-	httpFS := http.FS(embedDirStatic)
-
-	router.Use(favicon.New(favicon.Config{
-		URL:        "/favicon.ico",
-		FileSystem: httpFS,
-		File:       "static/favicon.ico",
-	}))
-
-	router.Use("/static", filesystem.New(filesystem.Config{
-		Root:       httpFS,
-		PathPrefix: "static",
-		Browse:     true,
-	}))
 
 	// Define a custom 404 handler
 	// Note: keep this at the bottom!

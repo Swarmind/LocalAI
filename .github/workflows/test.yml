@@ -71,7 +71,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install build-essential ccache upx-ucl curl ffmpeg
-          sudo apt-get install -y libgmock-dev
+          sudo apt-get install -y libgmock-dev clang
           curl https://repo.anaconda.com/pkgs/misc/gpgkeys/anaconda.asc | gpg --dearmor > conda.gpg && \
              sudo install -o root -g root -m 644 conda.gpg /usr/share/keyrings/conda-archive-keyring.gpg && \
              gpg --keyring /usr/share/keyrings/conda-archive-keyring.gpg --no-default-keyring --fingerprint 34161F5BF5EB1D4BFBBB8F0A8AEB4F8B29D82806 && \
@@ -96,9 +96,10 @@ jobs:
 
           go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.34.2
           go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@1958fcbe2ca8bd93af633f11e97d44e567e945af
+          go install github.com/GeertJohan/go.rice/rice@latest
 
           # The python3-grpc-tools package in 22.04 is too old
-          pip install --user grpcio-tools
+          pip install --user grpcio-tools==1.71.0 grpcio==1.71.0
 
           make -C backend/python/transformers
 
@@ -130,7 +131,7 @@ jobs:
           PATH="$PATH:/root/go/bin" GO_TAGS="tts" make --jobs 5 --output-sync=target test
       - name: Setup tmate session if tests fail
         if: ${{ failure() }}
-        uses: mxschmitt/action-tmate@v3.19
+        uses: mxschmitt/action-tmate@v3.22
         with:
           detached: true
           connect-timeout-seconds: 180
@@ -183,10 +184,11 @@ jobs:
           rm protoc.zip
           go install google.golang.org/protobuf/cmd/protoc-gen-go@v1.34.2
           go install google.golang.org/grpc/cmd/protoc-gen-go-grpc@1958fcbe2ca8bd93af633f11e97d44e567e945af
+          go install github.com/GeertJohan/go.rice/rice@latest
           PATH="$PATH:$HOME/go/bin" make protogen-go
       - name: Build images
         run: |
-          docker build --build-arg FFMPEG=true --build-arg IMAGE_TYPE=extras --build-arg EXTRA_BACKENDS=rerankers --build-arg MAKEFLAGS="--jobs=5 --output-sync=target" -t local-ai:tests -f Dockerfile .
+          docker build --build-arg FFMPEG=true --build-arg MAKEFLAGS="--jobs=5 --output-sync=target" -t local-ai:tests -f Dockerfile .
           BASE_IMAGE=local-ai:tests DOCKER_AIO_IMAGE=local-ai-aio:test make docker-aio
       - name: Test
         run: |
@@ -194,7 +196,7 @@ jobs:
             make run-e2e-aio
       - name: Setup tmate session if tests fail
         if: ${{ failure() }}
-        uses: mxschmitt/action-tmate@v3.19
+        uses: mxschmitt/action-tmate@v3.22
         with:
           detached: true
           connect-timeout-seconds: 180
@@ -221,7 +223,8 @@ jobs:
       - name: Dependencies
         run: |
           brew install protobuf grpc make protoc-gen-go protoc-gen-go-grpc libomp llvm
-          pip install --user --no-cache-dir grpcio-tools
+          pip install --user --no-cache-dir grpcio-tools==1.71.0 grpcio==1.71.0
+          go install github.com/GeertJohan/go.rice/rice@latest
       - name: Test
         run: |
           export C_INCLUDE_PATH=/usr/local/include
@@ -232,7 +235,7 @@ jobs:
           BUILD_TYPE="GITHUB_CI_HAS_BROKEN_METAL" CMAKE_ARGS="-DGGML_F16C=OFF -DGGML_AVX512=OFF -DGGML_AVX2=OFF -DGGML_FMA=OFF" make --jobs 4 --output-sync=target test
       - name: Setup tmate session if tests fail
         if: ${{ failure() }}
-        uses: mxschmitt/action-tmate@v3.19
+        uses: mxschmitt/action-tmate@v3.22
         with:
           detached: true
           connect-timeout-seconds: 180

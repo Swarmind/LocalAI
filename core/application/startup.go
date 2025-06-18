@@ -6,6 +6,7 @@ import (
 
 	"github.com/mudler/LocalAI/core/backend"
 	"github.com/mudler/LocalAI/core/config"
+	"github.com/mudler/LocalAI/core/gallery"
 	"github.com/mudler/LocalAI/core/services"
 	"github.com/mudler/LocalAI/internal"
 	"github.com/mudler/LocalAI/pkg/assets"
@@ -43,16 +44,10 @@ func New(opts ...config.AppOption) (*Application, error) {
 	if err != nil {
 		return nil, fmt.Errorf("unable to create ModelPath: %q", err)
 	}
-	if options.ImageDir != "" {
-		err := os.MkdirAll(options.ImageDir, 0750)
+	if options.GeneratedContentDir != "" {
+		err := os.MkdirAll(options.GeneratedContentDir, 0750)
 		if err != nil {
 			return nil, fmt.Errorf("unable to create ImageDir: %q", err)
-		}
-	}
-	if options.AudioDir != "" {
-		err := os.MkdirAll(options.AudioDir, 0750)
-		if err != nil {
-			return nil, fmt.Errorf("unable to create AudioDir: %q", err)
 		}
 	}
 	if options.UploadDir != "" {
@@ -66,10 +61,18 @@ func New(opts ...config.AppOption) (*Application, error) {
 		log.Error().Err(err).Msg("error installing models")
 	}
 
+	if err := pkgStartup.InstallExternalBackends(options.BackendGalleries, options.BackendsPath, nil, options.ExternalBackends...); err != nil {
+		log.Error().Err(err).Msg("error installing external backends")
+	}
+
 	configLoaderOpts := options.ToConfigLoaderOptions()
 
 	if err := application.BackendLoader().LoadBackendConfigsFromPath(options.ModelPath, configLoaderOpts...); err != nil {
 		log.Error().Err(err).Msg("error loading config files")
+	}
+
+	if err := gallery.RegisterBackends(options.BackendsPath, application.ModelLoader()); err != nil {
+		log.Error().Err(err).Msg("error registering external backends")
 	}
 
 	if options.ConfigFile != "" {
@@ -143,7 +146,7 @@ func New(opts ...config.AppOption) (*Application, error) {
 		}()
 	}
 
-	if options.LoadToMemory != nil {
+	if options.LoadToMemory != nil && !options.SingleBackend {
 		for _, m := range options.LoadToMemory {
 			cfg, err := application.BackendLoader().LoadBackendConfigFileByNameDefaultOptions(m, options)
 			if err != nil {

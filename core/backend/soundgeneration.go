@@ -26,21 +26,26 @@ func SoundGeneration(
 
 	opts := ModelOptions(backendConfig, appConfig)
 	soundGenModel, err := loader.Load(opts...)
-
 	if err != nil {
 		return "", nil, err
 	}
+	defer loader.Close()
 
 	if soundGenModel == nil {
 		return "", nil, fmt.Errorf("could not load sound generation model")
 	}
 
-	if err := os.MkdirAll(appConfig.AudioDir, 0750); err != nil {
+	if err := os.MkdirAll(appConfig.GeneratedContentDir, 0750); err != nil {
 		return "", nil, fmt.Errorf("failed creating audio directory: %s", err)
 	}
 
-	fileName := utils.GenerateUniqueFileName(appConfig.AudioDir, "sound_generation", ".wav")
-	filePath := filepath.Join(appConfig.AudioDir, fileName)
+	audioDir := filepath.Join(appConfig.GeneratedContentDir, "audio")
+	if err := os.MkdirAll(audioDir, 0750); err != nil {
+		return "", nil, fmt.Errorf("failed creating audio directory: %s", err)
+	}
+
+	fileName := utils.GenerateUniqueFileName(audioDir, "sound_generation", ".wav")
+	filePath := filepath.Join(audioDir, fileName)
 
 	res, err := soundGenModel.SoundGeneration(context.Background(), &proto.SoundGenerationRequest{
 		Text:        text,

@@ -40,10 +40,6 @@ func ModelOptions(c config.BackendConfig, so *config.ApplicationConfig, opts ...
 	grpcOpts := grpcModelOpts(c)
 	defOpts = append(defOpts, model.WithLoadGRPCLoadModelOpts(grpcOpts))
 
-	if so.SingleBackend {
-		defOpts = append(defOpts, model.WithSingleActiveBackend())
-	}
-
 	if so.ParallelBackendRequests {
 		defOpts = append(defOpts, model.EnableParallelRequests)
 	}
@@ -98,12 +94,17 @@ func grpcModelOpts(c config.BackendConfig) *pb.ModelOptions {
 		lowVRAM = *c.LowVRAM
 	}
 
+	reranking := false
+	if c.Reranking != nil {
+		reranking = *c.Reranking
+	}
+
 	mmap := false
 	if c.MMap != nil {
 		mmap = *c.MMap
 	}
 
-	ctxSize := 1024
+	ctxSize := 4096
 	if c.ContextSize != nil {
 		ctxSize = *c.ContextSize
 	}
@@ -121,8 +122,7 @@ func grpcModelOpts(c config.BackendConfig) *pb.ModelOptions {
 	triggers := make([]*pb.GrammarTrigger, 0)
 	for _, t := range c.FunctionsConfig.GrammarConfig.GrammarTriggers {
 		triggers = append(triggers, &pb.GrammarTrigger{
-			Word:    t.Word,
-			AtStart: t.AtStart,
+			Word: t.Word,
 		})
 
 	}
@@ -162,38 +162,34 @@ func grpcModelOpts(c config.BackendConfig) *pb.ModelOptions {
 		DisableLogStatus:     c.DisableLogStatus,
 		DType:                c.DType,
 		// LimitMMPerPrompt vLLM
-		LimitImagePerPrompt:  int32(c.LimitMMPerPrompt.LimitImagePerPrompt),
-		LimitVideoPerPrompt:  int32(c.LimitMMPerPrompt.LimitVideoPerPrompt),
-		LimitAudioPerPrompt:  int32(c.LimitMMPerPrompt.LimitAudioPerPrompt),
-		MMProj:               c.MMProj,
-		FlashAttention:       c.FlashAttention,
-		CacheTypeKey:         c.CacheTypeK,
-		CacheTypeValue:       c.CacheTypeV,
-		NoKVOffload:          c.NoKVOffloading,
-		YarnExtFactor:        c.YarnExtFactor,
-		YarnAttnFactor:       c.YarnAttnFactor,
-		YarnBetaFast:         c.YarnBetaFast,
-		YarnBetaSlow:         c.YarnBetaSlow,
-		NGQA:                 c.NGQA,
-		RMSNormEps:           c.RMSNormEps,
-		MLock:                mmlock,
-		RopeFreqBase:         c.RopeFreqBase,
-		RopeScaling:          c.RopeScaling,
-		Type:                 c.ModelType,
-		RopeFreqScale:        c.RopeFreqScale,
-		NUMA:                 c.NUMA,
-		Embeddings:           embeddings,
-		LowVRAM:              lowVRAM,
-		NGPULayers:           int32(nGPULayers),
-		MMap:                 mmap,
-		MainGPU:              c.MainGPU,
-		Threads:              int32(*c.Threads),
-		TensorSplit:          c.TensorSplit,
-		// AutoGPTQ
-		ModelBaseName:    c.AutoGPTQ.ModelBaseName,
-		Device:           c.AutoGPTQ.Device,
-		UseTriton:        c.AutoGPTQ.Triton,
-		UseFastTokenizer: c.AutoGPTQ.UseFastTokenizer,
+		LimitImagePerPrompt: int32(c.LimitMMPerPrompt.LimitImagePerPrompt),
+		LimitVideoPerPrompt: int32(c.LimitMMPerPrompt.LimitVideoPerPrompt),
+		LimitAudioPerPrompt: int32(c.LimitMMPerPrompt.LimitAudioPerPrompt),
+		MMProj:              c.MMProj,
+		FlashAttention:      c.FlashAttention,
+		CacheTypeKey:        c.CacheTypeK,
+		CacheTypeValue:      c.CacheTypeV,
+		NoKVOffload:         c.NoKVOffloading,
+		YarnExtFactor:       c.YarnExtFactor,
+		YarnAttnFactor:      c.YarnAttnFactor,
+		YarnBetaFast:        c.YarnBetaFast,
+		YarnBetaSlow:        c.YarnBetaSlow,
+		NGQA:                c.NGQA,
+		RMSNormEps:          c.RMSNormEps,
+		MLock:               mmlock,
+		RopeFreqBase:        c.RopeFreqBase,
+		RopeScaling:         c.RopeScaling,
+		Type:                c.ModelType,
+		RopeFreqScale:       c.RopeFreqScale,
+		NUMA:                c.NUMA,
+		Embeddings:          embeddings,
+		Reranking:           reranking,
+		LowVRAM:             lowVRAM,
+		NGPULayers:          int32(nGPULayers),
+		MMap:                mmap,
+		MainGPU:             c.MainGPU,
+		Threads:             int32(*c.Threads),
+		TensorSplit:         c.TensorSplit,
 		// RWKV
 		Tokenizer: c.Tokenizer,
 	}

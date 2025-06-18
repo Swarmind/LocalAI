@@ -36,12 +36,12 @@ func (t *TTSCMD) Run(ctx *cliContext.Context) error {
 	text := strings.Join(t.Text, " ")
 
 	opts := &config.ApplicationConfig{
-		ModelPath:         t.ModelsPath,
-		Context:           context.Background(),
-		AudioDir:          outputDir,
-		AssetsDestination: t.BackendAssetsPath,
+		ModelPath:           t.ModelsPath,
+		Context:             context.Background(),
+		GeneratedContentDir: outputDir,
+		AssetsDestination:   t.BackendAssetsPath,
 	}
-	ml := model.NewModelLoader(opts.ModelPath)
+	ml := model.NewModelLoader(opts.ModelPath, opts.SingleBackend)
 
 	defer func() {
 		err := ml.StopAllGRPC()

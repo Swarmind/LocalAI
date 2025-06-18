@@ -57,12 +57,14 @@ diffusers:
 
 Requirement: nvidia-container-toolkit (installation instructions [1](https://www.server-world.info/en/note?os=Ubuntu_22.04&p=nvidia&f=2) [2](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html))
 
-To check what CUDA version do you need, you can either run `nvidia-smi` or `nvcc --version`. 
+If using a system with SELinux, ensure you have the policies installed, such as those [provided by nvidia](https://github.com/NVIDIA/dgx-selinux/)
+
+To check what CUDA version do you need, you can either run `nvidia-smi` or `nvcc --version`.
 
 Alternatively, you can also check nvidia-smi with docker:
 
 ```
-docker run --runtime=nvidia --rm nvidia/cuda nvidia-smi
+docker run --runtime=nvidia --rm nvidia/cuda:12.8.0-base-ubuntu24.04 nvidia-smi
 ```
 
 To use CUDA, use the images with the `cublas` tag, for example.
@@ -112,7 +114,7 @@ llama_init_from_file: kv self size  =  512.00 MB
 
 ## ROCM(AMD) acceleration
 
-There are a limited number of tested configurations for ROCm systems however most newer deditated GPU consumer grade devices seem to be supported under the current ROCm6 implementation. 
+There are a limited number of tested configurations for ROCm systems however most newer deditated GPU consumer grade devices seem to be supported under the current ROCm6 implementation.
 
 Due to the nature of ROCm it is best to run all implementations in containers as this limits the number of packages required for installation on host system, compatability and package versions for dependencies across all variations of OS must be tested independently if disired, please refer to the [build]({{%relref "docs/getting-started/build#Acceleration" %}}) documentation.
 
@@ -137,7 +139,7 @@ LocalAI hipblas images are built against the following targets: gfx900,gfx906,gf
 
 If your device is not one of these you must specify the corresponding `GPU_TARGETS` and specify `REBUILD=true`. Otherwise you don't need to specify these in the commands below.
 
-### Verified 
+### Verified
 
 The devices in the following list have been tested with `hipblas` images running `ROCm 6.0.0`
 
@@ -147,7 +149,6 @@ The devices in the following list have been tested with `hipblas` images running
 | diffusers | yes | Radeon VII (gfx906) |
 | piper | yes | Radeon VII (gfx906) |
 | whisper | no | none |
-| autogptq | no | none |
 | bark | no | none |
 | coqui | no | none |
 | transformers | no | none |
@@ -166,7 +167,7 @@ The devices in the following list have been tested with `hipblas` images running
 1. Check your GPU LLVM target is compatible with the version of ROCm. This can be found in the [LLVM Docs](https://llvm.org/docs/AMDGPUUsage.html).
 2. Check which ROCm version is compatible with your LLVM target and your chosen OS (pay special attention to supported kernel versions). See the following for compatability for ([ROCm 6.0.0](https://rocm.docs.amd.com/projects/install-on-linux/en/docs-6.0.0/reference/system-requirements.html)) or ([ROCm 6.0.2](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/reference/system-requirements.html))
 3. Install you chosen version of the `dkms` and `rocm` (it is recommended that the native package manager be used for this process for any OS as version changes are executed more easily via this method if updates are required). Take care to restart after installing `amdgpu-dkms` and before installing `rocm`, for details regarding this see the installation documentation for your chosen OS ([6.0.2](https://rocm.docs.amd.com/projects/install-on-linux/en/latest/how-to/native-install/index.html) or [6.0.0](https://rocm.docs.amd.com/projects/install-on-linux/en/docs-6.0.0/how-to/native-install/index.html))
-4. Deploy. Yes it's that easy. 
+4. Deploy. Yes it's that easy.
 
 #### Setup Example (Docker/containerd)
 
@@ -248,7 +249,7 @@ This configuration has been tested on a 'custom' cluster managed by SUSE Rancher
 
 - When installing the ROCM kernel driver on your system ensure that you are installing an equal or newer version that that which is currently implemented in LocalAI (6.0.0 at time of writing).
 - AMD documentation indicates that this will ensure functionality however your milage may vary depending on the GPU and distro you are using.
-- If you encounter an `Error 413` on attempting to upload an audio file or image for whisper or llava/bakllava on a k8s deployment, note that the ingress for your deployment may require the annontation `nginx.ingress.kubernetes.io/proxy-body-size: "25m"` to allow larger uploads. This may be included in future versions of the helm chart. 
+- If you encounter an `Error 413` on attempting to upload an audio file or image for whisper or llava/bakllava on a k8s deployment, note that the ingress for your deployment may require the annotation `nginx.ingress.kubernetes.io/proxy-body-size: "25m"` to allow larger uploads. This may be included in future versions of the helm chart.
 
 ## Intel acceleration (sycl)
 
@@ -279,3 +280,36 @@ docker run --rm -ti --device /dev/dri -p 8080:8080 -e DEBUG=true -e MODELS_PATH=
 ```
 
 Note also that sycl does have a known issue to hang with `mmap: true`. You have to disable it in the model configuration if explicitly enabled.
+
+## Vulkan acceleration
+
+### Requirements
+
+If using nvidia, follow the steps in the [CUDA](#cudanvidia-acceleration) section to configure your docker runtime to allow access to the GPU.
+
+### Container images
+
+To use Vulkan, use the images with the `vulkan` tag, for example `{{< version >}}-vulkan-ffmpeg-core`.
+
+#### Example
+
+To run LocalAI with Docker and Vulkan, you can use the following command as an example:
+
+```bash
+docker run -p 8080:8080 -e DEBUG=true -v $PWD/models:/build/models localai/localai:latest-vulkan-ffmpeg-core
+```
+
+### Notes
+
+In addition to the commands to run LocalAI normally, you need to specify additional flags to pass the GPU hardware to the container.
+
+These flags are the same as the sections above, depending on the hardware, for [nvidia](#cudanvidia-acceleration), [AMD](#rocmamd-acceleration) or [Intel](#intel-acceleration-sycl).
+
+If you have mixed hardware, you can pass flags for multiple GPUs, for example:
+
+```bash
+docker run -p 8080:8080 -e DEBUG=true -v $PWD/models:/build/models \
+--gpus=all \ # nvidia passthrough
+--device /dev/dri --device /dev/kfd \ # AMD/Intel passthrough
+localai/localai:latest-vulkan-ffmpeg-core
+```

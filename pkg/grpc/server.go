@@ -75,6 +75,18 @@ func (s *server) GenerateImage(ctx context.Context, in *pb.GenerateImageRequest)
 	return &pb.Result{Message: "Image generated", Success: true}, nil
 }
 
+func (s *server) GenerateVideo(ctx context.Context, in *pb.GenerateVideoRequest) (*pb.Result, error) {
+	if s.llm.Locking() {
+		s.llm.Lock()
+		defer s.llm.Unlock()
+	}
+	err := s.llm.GenerateVideo(in)
+	if err != nil {
+		return &pb.Result{Message: fmt.Sprintf("Error generating video: %s", err.Error()), Success: false}, err
+	}
+	return &pb.Result{Message: "Video generated", Success: true}, nil
+}
+
 func (s *server) TTS(ctx context.Context, in *pb.TTSRequest) (*pb.Result, error) {
 	if s.llm.Locking() {
 		s.llm.Lock()
@@ -244,7 +256,10 @@ func StartServer(address string, model LLM) error {
 	if err != nil {
 		return err
 	}
-	s := grpc.NewServer()
+	s := grpc.NewServer(
+		grpc.MaxRecvMsgSize(50*1024*1024), // 50MB
+		grpc.MaxSendMsgSize(50*1024*1024), // 50MB
+	)
 	pb.RegisterBackendServer(s, &server{llm: model})
 	log.Printf("gRPC Server listening at %v", lis.Addr())
 	if err := s.Serve(lis); err != nil {
@@ -259,7 +274,10 @@ func RunServer(address string, model LLM) (func() error, error) {
 	if err != nil {
 		return nil, err
 	}
-	s := grpc.NewServer()
+	s := grpc.NewServer(
+		grpc.MaxRecvMsgSize(50*1024*1024), // 50MB
+		grpc.MaxSendMsgSize(50*1024*1024), // 50MB
+	)
 	pb.RegisterBackendServer(s, &server{llm: model})
 	log.Printf("gRPC Server listening at %v", lis.Addr())
 	if err = s.Serve(lis); err != nil {

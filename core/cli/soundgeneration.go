@@ -70,11 +70,11 @@ func (t *SoundGenerationCMD) Run(ctx *cliContext.Context) error {
 	opts := &config.ApplicationConfig{
 		ModelPath:            t.ModelsPath,
 		Context:              context.Background(),
-		AudioDir:             outputDir,
+		GeneratedContentDir:  outputDir,
 		AssetsDestination:    t.BackendAssetsPath,
 		ExternalGRPCBackends: externalBackends,
 	}
-	ml := model.NewModelLoader(opts.ModelPath)
+	ml := model.NewModelLoader(opts.ModelPath, opts.SingleBackend)
 
 	defer func() {
 		err := ml.StopAllGRPC()

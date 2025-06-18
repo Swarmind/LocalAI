@@ -66,7 +66,7 @@ class BackendServicer(backend_pb2_grpc.BackendServicer):
 
     def TTS(self, request, context):
         try:
-            # if model is multilangual add language from request or env as fallback
+            # if model is multilingual add language from request or env as fallback
             lang = request.language or COQUI_LANGUAGE
             if lang == "":
                 lang = None
@@ -86,7 +86,12 @@ class BackendServicer(backend_pb2_grpc.BackendServicer):
         return backend_pb2.Result(success=True)
 
 def serve(address):
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=MAX_WORKERS))
+    server = grpc.server(futures.ThreadPoolExecutor(max_workers=MAX_WORKERS),
+        options=[
+            ('grpc.max_message_length', 50 * 1024 * 1024),  # 50MB
+            ('grpc.max_send_message_length', 50 * 1024 * 1024),  # 50MB
+            ('grpc.max_receive_message_length', 50 * 1024 * 1024),  # 50MB
+        ])
     backend_pb2_grpc.add_BackendServicer_to_server(BackendServicer(), server)
     server.add_insecure_port(address)
     server.start()

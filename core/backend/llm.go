@@ -22,8 +22,9 @@ import (
 )
 
 type LLMResponse struct {
-	Response string // should this be []byte?
-	Usage    TokenUsage
+	Response    string // should this be []byte?
+	Usage       TokenUsage
+	AudioOutput string
 }
 
 type TokenUsage struct {
@@ -53,6 +54,7 @@ func ModelInference(ctx context.Context, s string, messages []schema.Message, im
 	if err != nil {
 		return nil, err
 	}
+	defer loader.Close()
 
 	var protoMessages []*proto.Message
 	// if we are using the tokenizer template, we need to convert the messages to proto messages
@@ -116,6 +118,11 @@ func ModelInference(ctx context.Context, s string, messages []schema.Message, im
 		}
 
 		if tokenCallback != nil {
+
+			if c.TemplateConfig.ReplyPrefix != "" {
+				tokenCallback(c.TemplateConfig.ReplyPrefix, tokenUsage)
+			}
+
 			ss := ""
 
 			var partialRune []byte
@@ -128,17 +135,22 @@ func ModelInference(ctx context.Context, s string, messages []schema.Message, im
 				tokenUsage.TimingTokenGeneration = reply.TimingTokenGeneration
 				tokenUsage.TimingPromptProcessing = reply.TimingPromptProcessing
 
+				// Process complete runes and accumulate them
+				var completeRunes []byte
 				for len(partialRune) > 0 {
 					r, size := utf8.DecodeRune(partialRune)
 					if r == utf8.RuneError {
 						// incomplete rune, wait for more bytes
 						break
 					}
-
-					tokenCallback(string(r), tokenUsage)
-					ss += string(r)
-
+					completeRunes = append(completeRunes, partialRune[:size]...)
 					partialRune = partialRune[size:]
+				}
+
+				// If we have complete runes, send them as a single token
+				if len(completeRunes) > 0 {
+					tokenCallback(string(completeRunes), tokenUsage)
+					ss += string(completeRunes)
 				}
 
 				if len(msg) == 0 {
@@ -165,8 +177,13 @@ func ModelInference(ctx context.Context, s string, messages []schema.Message, im
 			tokenUsage.TimingTokenGeneration = reply.TimingTokenGeneration
 			tokenUsage.TimingPromptProcessing = reply.TimingPromptProcessing
 
+			response := string(reply.Message)
+			if c.TemplateConfig.ReplyPrefix != "" {
+				response = c.TemplateConfig.ReplyPrefix + response
+			}
+
 			return LLMResponse{
-				Response: string(reply.Message),
+				Response: response,
 				Usage:    tokenUsage,
 			}, err
 		}

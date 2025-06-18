@@ -23,21 +23,22 @@ func ModelTTS(
 ) (string, *proto.Result, error) {
 	opts := ModelOptions(backendConfig, appConfig, model.WithDefaultBackendString(model.PiperBackend))
 	ttsModel, err := loader.Load(opts...)
-
 	if err != nil {
 		return "", nil, err
 	}
+	defer loader.Close()
 
 	if ttsModel == nil {
 		return "", nil, fmt.Errorf("could not load tts model %q", backendConfig.Model)
 	}
 
-	if err := os.MkdirAll(appConfig.AudioDir, 0750); err != nil {
+	audioDir := filepath.Join(appConfig.GeneratedContentDir, "audio")
+	if err := os.MkdirAll(audioDir, 0750); err != nil {
 		return "", nil, fmt.Errorf("failed creating audio directory: %s", err)
 	}
 
-	fileName := utils.GenerateUniqueFileName(appConfig.AudioDir, "tts", ".wav")
-	filePath := filepath.Join(appConfig.AudioDir, fileName)
+	fileName := utils.GenerateUniqueFileName(audioDir, "tts", ".wav")
+	filePath := filepath.Join(audioDir, fileName)
 
 	// We join the model name to the model path here. This seems to only be done for TTS and is HIGHLY suspect.
 	// This should be addressed in a follow up PR soon.

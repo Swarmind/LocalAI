@@ -2,11 +2,11 @@ package config
 
 import (
 	"context"
-	"embed"
 	"encoding/json"
 	"regexp"
 	"time"
 
+	rice "github.com/GeertJohan/go.rice"
 	"github.com/mudler/LocalAI/pkg/xsysinfo"
 	"github.com/rs/zerolog/log"
 )
@@ -15,24 +15,27 @@ type ApplicationConfig struct {
 	Context                             context.Context
 	ConfigFile                          string
 	ModelPath                           string
+	BackendsPath                        string
+	ExternalBackends                    []string
 	LibPath                             string
 	UploadLimitMB, Threads, ContextSize int
 	F16                                 bool
 	Debug                               bool
-	ImageDir                            string
-	AudioDir                            string
-	UploadDir                           string
-	ConfigsDir                          string
-	DynamicConfigsDir                   string
-	DynamicConfigsDirPollInterval       time.Duration
-	CORS                                bool
-	CSRF                                bool
-	PreloadJSONModels                   string
-	PreloadModelsFromPath               string
-	CORSAllowOrigins                    string
-	ApiKeys                             []string
-	P2PToken                            string
-	P2PNetworkID                        string
+	GeneratedContentDir                 string
+
+	ConfigsDir string
+	UploadDir  string
+
+	DynamicConfigsDir             string
+	DynamicConfigsDirPollInterval time.Duration
+	CORS                          bool
+	CSRF                          bool
+	PreloadJSONModels             string
+	PreloadModelsFromPath         string
+	CORSAllowOrigins              string
+	ApiKeys                       []string
+	P2PToken                      string
+	P2PNetworkID                  string
 
 	DisableWebUI                       bool
 	EnforcePredownloadScans            bool
@@ -44,9 +47,10 @@ type ApplicationConfig struct {
 	DisableGalleryEndpoint             bool
 	LoadToMemory                       []string
 
-	Galleries []Gallery
+	Galleries        []Gallery
+	BackendGalleries []Gallery
 
-	BackendAssets     embed.FS
+	BackendAssets     *rice.Box
 	AssetsDestination string
 
 	ExternalGRPCBackends map[string]string
@@ -91,6 +95,18 @@ func WithModelsURL(urls ...string) AppOption {
 func WithModelPath(path string) AppOption {
 	return func(o *ApplicationConfig) {
 		o.ModelPath = path
+	}
+}
+
+func WithBackendsPath(path string) AppOption {
+	return func(o *ApplicationConfig) {
+		o.BackendsPath = path
+	}
+}
+
+func WithExternalBackends(backends ...string) AppOption {
+	return func(o *ApplicationConfig) {
+		o.ExternalBackends = backends
 	}
 }
 
@@ -197,7 +213,7 @@ func WithBackendAssetsOutput(out string) AppOption {
 	}
 }
 
-func WithBackendAssets(f embed.FS) AppOption {
+func WithBackendAssets(f *rice.Box) AppOption {
 	return func(o *ApplicationConfig) {
 		o.BackendAssets = f
 	}
@@ -214,6 +230,20 @@ func WithStringGalleries(galls string) AppOption {
 			log.Error().Err(err).Msg("failed loading galleries")
 		}
 		o.Galleries = append(o.Galleries, galleries...)
+	}
+}
+
+func WithBackendGalleries(galls string) AppOption {
+	return func(o *ApplicationConfig) {
+		if galls == "" {
+			o.BackendGalleries = []Gallery{}
+			return
+		}
+		var galleries []Gallery
+		if err := json.Unmarshal([]byte(galls), &galleries); err != nil {
+			log.Error().Err(err).Msg("failed loading galleries")
+		}
+		o.BackendGalleries = append(o.BackendGalleries, galleries...)
 	}
 }
 
@@ -279,15 +309,9 @@ func WithDebug(debug bool) AppOption {
 	}
 }
 
-func WithAudioDir(audioDir string) AppOption {
+func WithGeneratedContentDir(generatedContentDir string) AppOption {
 	return func(o *ApplicationConfig) {
-		o.AudioDir = audioDir
-	}
-}
-
-func WithImageDir(imageDir string) AppOption {
-	return func(o *ApplicationConfig) {
-		o.ImageDir = imageDir
+		o.GeneratedContentDir = generatedContentDir
 	}
 }
 

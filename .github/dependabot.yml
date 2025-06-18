@@ -30,10 +30,6 @@ updates:
       # Check for updates to GitHub Actions every weekday
       interval: "weekly"
   - package-ecosystem: "pip"
-    directory: "/backend/python/autogptq"
-    schedule:
-      interval: "weekly"
-  - package-ecosystem: "pip"
     directory: "/backend/python/bark"
     schedule:
       interval: "weekly"
@@ -63,10 +59,6 @@ updates:
       interval: "weekly"
   - package-ecosystem: "pip"
     directory: "/backend/python/openvoice"
-    schedule:
-      interval: "weekly"
-  - package-ecosystem: "pip"
-    directory: "/backend/python/parler-tts"
     schedule:
       interval: "weekly"
   - package-ecosystem: "pip"
